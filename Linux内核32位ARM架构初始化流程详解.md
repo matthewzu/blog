@@ -79,6 +79,7 @@ ENTRY(stext)
 ```
 逐条解释如下：
 1. __HEAD
+    
     定义在include/linux/init.h中：
     ```
     #define __HEAD  .section    ".head.text","ax"
@@ -118,6 +119,7 @@ ENTRY(stext)
         ```
         因此此处值为**0x00008000**。
 2. ENTRY(stext)
+    
     **ENTRY**定义在`include/linux/linkage.h`中，用于定义一个所有源文件可见的全局符号`stext`：
     ```
     ...
@@ -154,6 +156,7 @@ ENTRY(stext)
     ```
     根据[GNU汇编器（as）手册.globl语法](https://sourceware.org/binutils/docs/as/Global.html#Global)和[GNU汇编器（as）手册.align语法](https://sourceware.org/binutils/docs/as/Align.html#Align)，此处定义`stext`标号，将其声明为全局符号，不做任何对齐。
 3. safe_svcmode_maskall r9
+    
     进入SVC模式，并关闭中断
 
 ### 2.1.2 safe_svcmode_maskall
@@ -184,8 +187,10 @@ ENTRY(stext)
 ```
 逐条解释如下：
 1.  .macro safe_svcmode_maskall reg:req
-根据[GNU汇编器（as）手册.macro语法](https://sourceware.org/binutils/docs/as/Macro.html#Macro)，本行定义了宏safe_svcmode_maskall，参数`reg`必须传递一个有效值
+
+    根据[GNU汇编器（as）手册.macro语法](https://sourceware.org/binutils/docs/as/Macro.html#Macro)，本行定义了宏safe_svcmode_maskall，参数`reg`必须传递一个有效值
 2.  #if __LINUX_ARM_ARCH__ >= 6 && !defined(CONFIG_CPU_V7M)
+    
     * `__LINUX_ARM_ARCH__`由`arch/arm/Makefile`根据Kconfig选项来指定，传递顺序如下：
         > CONFIG_ARCH_VEXPRESS(vexpress_defconfig) -> ARCH_VEXPRESS(arch/arm/mach-vexpress/Kconfig) -> ARCH_MULTI_V7(arch/arm/Kconfig) -> CPU_V7(arch/arm/mm/Kconfig) -> CONFIG_CPU_32v7(arch/arm/Makefile) -> -D__LINUX_ARM_ARCH__=7(arch/arm/Makefile)
     * 根据`Documentation/kbuild/kconfig.txt`，环境变量`CONFIG_`没有指定时，默认使用`CONFIG_`作为Kconfig配置项的前缀，例如Makefile中指定`CONFIG_ = XYZ_`，那么Kconfig配置项`CPU_32v7`就会被转换成`XYZ_CPU_32v7`并保存到`include/generated/autoconf.h`和`include/config/auto.conf`中，从而被源文件和Makefile使用。
@@ -197,10 +202,13 @@ ENTRY(stext)
         ```
     * `CONFIG_CPU_V7M`用于`Cortex V7-M`系列处理器，没有定义。
 3.  mrs     \reg , cpsr
+    
     从CPSR（当前处理器状态寄存器）读取处理器状态到`reg`对应寄存器
 4.  eor     \reg, \reg, #HYP_MODE
+    
     `HYP_MODE`即`Hypervisor模式0x1a`，定义在`arch/arm/include/uapi/asm/ptrace.h`中;本条指令将处理器状态与`0x1a`进行`按位异或`操作，按照`相同输出零，不同输出一`的规则将结果按位存储在`reg`中；因此，如果处理器工作在`Hypervisor模式`，也就是说模式域的值为`0x1a`，那么`reg`值的模式域的值就是0，否则不为0，输出结果的其他域根据具体情况而定。
 5.  tst     \reg, #MODE_MASK
+    
     `MODE_MASK`即`处理器模式掩码0x1f`，定义在`arch/arm/include/uapi/asm/ptrace.h`中；本条指令将上一条指令的结果与`0x1f`执行`按位与`操作，按照`相同输出一，不同输出零`的规则将结果按位存储在`reg`中，同时更新条件标志；结合上一条指令，如果处理器工作在`Hypervisor模式`，则`reg`值为0，否则`reg`值为1。
 6.  bic     \reg , \reg , #MODE_MASK
 
