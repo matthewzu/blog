@@ -79,24 +79,37 @@ ENTRY(stext)
 ```
 逐条解释如下：
 1. __HEAD
-    
+
     定义在include/linux/init.h中：
     ```
     #define __HEAD  .section    ".head.text","ax"
     ```
     根据[GNU汇编器（as）手册.section语法](https://sourceware.org/binutils/docs/as/Section.html#Section)，此处指定当前代码被链接到`.head.text`段，`a`被忽略，`x`为可执行段标志。该代码段定义在`arch/arm/kernel/vmlinux.lds.S`中：
     ```
-    . = PAGE_OFFSET + TEXT_OFFSET;
-    .head.text : {
-        _text = .;
-        HEAD_TEXT
+    SECTIONS
+    {
+        /DISCARD/ : {
+            ...
+        }
+
+        . = PAGE_OFFSET + TEXT_OFFSET;
+        .head.text : {
+            _text = .;
+            HEAD_TEXT
+        }
+
+        .text : {
+            ...
+        }
+        _etext = .;         /* End of text section */
+        ...
     }
     ```
     其中， `HEAD_TEXT`定义在`include/asm-generic/vmlinux.lds.h`中，
     ```
     #define HEAD_TEXT  *(.head.text)
     ```
-    根据[GNU链接器（ld）手册section语法](https://sourceware.org/binutils/docs/ld/SECTIONS.html#SECTIONS)，上述链接脚本定义了一个位于**PAGE_OFFSET + TEXT_OFFSET**即**0x80008000**的输出段，用于存放`.head.text`输入端中的代码。其中：
+    根据[GNU链接器（ld）手册section语法](https://sourceware.org/binutils/docs/ld/SECTIONS.html#SECTIONS)，上述链接脚本定义了一个位于**目标文件起始位置**，链接地址为**PAGE_OFFSET + TEXT_OFFSET**的输出段，用于存放`.head.text`输入段中的代码。其中：
     * 根据`arch/arm/include/asm/memory.h`， **PAGE_OFFSET**定义为CONFIG_PAGE_OFFSET，即由`arch/arm/Kconfig`的PAGE_OFFSET配置项来决定：
         ```
         config PAGE_OFFSET
@@ -117,9 +130,9 @@ ENTRY(stext)
         # The byte offset of the kernel image in RAM from the start of RAM.
         TEXT_OFFSET := $(textofs-y)
         ```
-        因此此处值为**0x00008000**。
+        因此此处值为**0x00008000**，用于保留部分空间以**存放初始页表**。
 2. ENTRY(stext)
-    
+
     **ENTRY**定义在`include/linux/linkage.h`中，用于定义一个所有源文件可见的全局符号`stext`：
     ```
     ...
@@ -156,7 +169,7 @@ ENTRY(stext)
     ```
     根据[GNU汇编器（as）手册.globl语法](https://sourceware.org/binutils/docs/as/Global.html#Global)和[GNU汇编器（as）手册.align语法](https://sourceware.org/binutils/docs/as/Align.html#Align)，此处定义`stext`标号，将其声明为全局符号，不做任何对齐。
 3. safe_svcmode_maskall r9
-    
+
     进入SVC模式，并关闭中断
 
 ### 2.1.2 safe_svcmode_maskall
@@ -190,7 +203,7 @@ ENTRY(stext)
 
     根据[GNU汇编器（as）手册.macro语法](https://sourceware.org/binutils/docs/as/Macro.html#Macro)，本行定义了宏safe_svcmode_maskall，参数`reg`必须传递一个有效值
 2.  #if __LINUX_ARM_ARCH__ >= 6 && !defined(CONFIG_CPU_V7M)
-    
+
     * `__LINUX_ARM_ARCH__`由`arch/arm/Makefile`根据Kconfig选项来指定，传递顺序如下：
         > CONFIG_ARCH_VEXPRESS(vexpress_defconfig) -> ARCH_VEXPRESS(arch/arm/mach-vexpress/Kconfig) -> ARCH_MULTI_V7(arch/arm/Kconfig) -> CPU_V7(arch/arm/mm/Kconfig) -> CONFIG_CPU_32v7(arch/arm/Makefile) -> -D__LINUX_ARM_ARCH__=7(arch/arm/Makefile)
     * 根据`Documentation/kbuild/kconfig.txt`，环境变量`CONFIG_`没有指定时，默认使用`CONFIG_`作为Kconfig配置项的前缀，例如Makefile中指定`CONFIG_ = XYZ_`，那么Kconfig配置项`CPU_32v7`就会被转换成`XYZ_CPU_32v7`并保存到`include/generated/autoconf.h`和`include/config/auto.conf`中，从而被源文件和Makefile使用。
@@ -198,29 +211,89 @@ ENTRY(stext)
         ```
         arch-$(CONFIG_CPU_32v7) =-D__LINUX_ARM_ARCH__=7 ...
         ...
-        KBUILD_AFLAGS +=$(CFLAGS_ABI) $(AFLAGS_ISA) $(arch-y) $(tune-y) -include asm/unified.h -msoft-float
+        KBUILD_AFLAGS +=$(CFLAGS_ABI) $(AFLAGS_ISA) $(arch-y) $(tune-y) ...
         ```
     * `CONFIG_CPU_V7M`用于`Cortex V7-M`系列处理器，没有定义。
 3.  mrs     \reg , cpsr
-    
+
     从CPSR（当前处理器状态寄存器）读取处理器状态到`reg`对应寄存器
 4.  eor     \reg, \reg, #HYP_MODE
-    
+
     `HYP_MODE`即`Hypervisor模式0x1a`，定义在`arch/arm/include/uapi/asm/ptrace.h`中;本条指令将处理器状态与`0x1a`进行`按位异或`操作，按照`相同输出零，不同输出一`的规则将结果按位存储在`reg`中；因此，如果处理器工作在`Hypervisor模式`，也就是说模式域的值为`0x1a`，那么`reg`值的模式域的值就是0，否则不为0，输出结果的其他域根据具体情况而定。
 5.  tst     \reg, #MODE_MASK
-    
-    `MODE_MASK`即`处理器模式掩码0x1f`，定义在`arch/arm/include/uapi/asm/ptrace.h`中；本条指令将上一条指令的结果与`0x1f`执行`按位与`操作，按照`相同输出一，不同输出零`的规则将结果按位存储在`reg`中，同时更新条件标志；结合上一条指令，如果处理器工作在`Hypervisor模式`，则`reg`值为0，否则`reg`值为1。
+
+    `MODE_MASK`即`处理器模式掩码0x1f`，定义在`arch/arm/include/uapi/asm/ptrace.h`中；本条指令将上一条指令的结果与`0x1f`执行`按位与`操作，按照`相同输出一，不同输出零`的规则更新条件标志，同时丢弃结果；结合上一条指令，如果当前处理器工作在`Hypervisor模式`，则结果为0,否则非0。
 6.  bic     \reg , \reg , #MODE_MASK
 
+    按位清除`reg`寄存器中内容（上一条eor指令的输出结果）的处理器模式域，保存在`reg`中。
 7.  orr     \reg , \reg , #PSR_I_BIT | PSR_F_BIT | SVC_MODE
-8.  bne     1f
-9.  orr     \reg, \reg, #PSR_A_BIT
-10. badr    lr, 2f
-11. msr     spsr_cxsf, \reg
-12. _MSR_ELR_HYP(14)
-13. __ERET
-14. msr    cpsr_c, \reg
 
+    `reg`寄存器中的内容（上一条指令的输出结果）与`#PSR_I_BIT | PSR_F_BIT | SVC_MODE`按位与，即**关闭IRQ（普通中断）和FIQ(快速中断)，并设置处理器模式域为SVC（Supervisor）模式**。
+8.  bne     1f
+
+    如果上一条tst指令测试的结果非0，即**当前处理器模式不是`Hypervisor模式`，则跳转到标号1；否则继续执行下一条指令**。
+9.  orr     \reg, \reg, #PSR_A_BIT
+
+    `reg`寄存器中的内容（上一条orr指令的输出结果）与`#PSR_A_BIT`按位与，即**关闭异步终止异常**（内存系统异常等）。
+10. badr    lr, 2f
+
+    `badr`定义在`arch/arm/include/asm/assembler.h`中，
+
+    ```
+    .irp    c,,eq,ne,cs,cc,mi,pl,vs,vc,hi,ls,ge,lt,gt,le,hs,lo
+    .macro  badr\c, rd, sym
+    ...
+    adr\c   \rd, \sym
+    ...
+    .endm
+    .endr
+    ```
+    根据[GNU汇编器（as）手册.irp语法](https://sourceware.org/binutils/docs/as/Irp.html)，上述代码定义了一系列宏（badreq、badrne、badrcs等），用于根据不同的条件将标号`sym`与PC之间的差值加上PC后存放到`rd`中，从而将标号`sym`的物理地址（运行时地址）放入`rd`中；此处用于**将标号2的物理地址（运行时地址）放入lr**。
+
+11. msr     spsr_cxsf, \reg
+
+    根据[ARMv7-AR Reference Manual](https://silver.arm.com/download/ARM_and_AMBA_Architecture/AR570-DA-70000-r0p0-00rel3/DDI0406C_d_armv7ar_arm.pdf)附录`B9.3.12 MSR (register)`，本条指令用于将`reg`中的内容写入`SPSR`（saved处理器状态寄存器）中的c（xPSR[7:0]）、x（xPSR[15:8]）、s（xPSR[23:16]）、f（xPSR[31:24]）几个域中；SPSR和CPSR的具体定义可参看[ARMv7-AR Reference Manual](https://silver.arm.com/download/ARM_and_AMBA_Architecture/AR570-DA-70000-r0p0-00rel3/DDI0406C_d_armv7ar_arm.pdf)附录`B1.3.3 Program Status Registers (PSRs)`。
+12. __MSR_ELR_HYP(14)
+
+    `__MSR_ELR_HYP`定义在`arch/arm/include/asm/opcodes-virt.h`中：
+    ```
+    #define __MSR_ELR_HYP(regnum)   __inst_arm_thumb32(         \
+        0xE12EF300 | regnum,                                    \
+        0xF3808E30 | (regnum << 16)                             \
+    )
+    ```
+    其中，`__inst_arm_thumb32`定义在`arch/arm/include/asm/opcodes.h`中：
+    ```
+    #define __inst_arm(x) ___inst_arm(___asm_opcode_to_mem_arm(x))
+    ...
+    #ifdef CONFIG_THUMB2_KERNEL
+    ...
+    #else
+    ...
+    #define __inst_arm_thumb32(arm_opcode, thumb_opcode) __inst_arm(arm_opcode)
+    #endif
+    ...
+    #ifdef __ASSEMBLY__
+    #define ___inst_arm(x) .long x
+    ...
+    #else
+    ...
+    #endif
+    ```
+    因此，此条指令用于生成一条编译器不支持的指令；根据[ARMv7-AR Reference Manual](https://silver.arm.com/download/ARM_and_AMBA_Architecture/AR570-DA-70000-r0p0-00rel3/DDI0406C_d_armv7ar_arm.pdf)附录`B9.3.10 MSR (Banked register)`，`0xE12EF300 | regnum`的cond、R、M1和M分别为1110（无条件跳转）、 0（write_spsr）、 1110、1（SYSm = M:M1 = 11110），进而相当于**MSR ELR_hyp, regnum**；因此本条指令用于**将r14的内容写入ELR_hyp**，其中，`r14`为`LR`（参考[针对ARM体系结构的应用程序二进制接口(ABI)](http://infocenter.arm.com/help/topic/com.arm.doc.ihi0042f/IHI0042F_aapcs.pdf)章节`5.1.1 Core registers`），`ELR_hyp`为`Hypervisor模式下的LR副本`（参考[ARMv7-AR Reference Manual](https://silver.arm.com/download/ARM_and_AMBA_Architecture/AR570-DA-70000-r0p0-00rel3/DDI0406C_d_armv7ar_arm.pdf)附录`B1.3.4 ELR_hyp`）。
+13. __ERET
+
+    __ERET`定义在`arch/arm/include/asm/opcodes-virt.h`中：
+    ```
+    #define __ERET   __inst_arm_thumb32(    \
+        0xE160006E,                         \
+        0xF3DE8F00                          \
+    )
+    ```
+    参考上一条指令的解析和[ARMv7-AR Reference Manual](https://silver.arm.com/download/ARM_and_AMBA_Architecture/AR570-DA-70000-r0p0-00rel3/DDI0406C_d_armv7ar_arm.pdf)附录`B9.3.3 ERET`，本指令相当于`ERET`，即**从SPSR_hyp加载CPSR，从ELR_hyp加载PC从而跳转**。
+14. 1： msr    cpsr_c, \reg
+
+    将`reg`中的内容加载到CPSR（当前处理器状态寄存器）的c（xPSR[7:0]）域，包括I（IRQ屏蔽位）、F（FIQ屏蔽位）、T（Thumb执行状态位）和Mode（处理器模式位域）。
 
 ## 2.2 获取处理器信息
 
@@ -240,7 +313,7 @@ ENTRY(stext)
 ```
 逐条解释如下：
 1. mrc     p15, 0, r9, c0, c0
-    根据[ARMv7-AR Reference Manual](https://silver.arm.com/download/ARM_and_AMBA_Architecture/AR570-DA-70000-r0p0-00rel3/DDI0406C_d_armv7ar_arm.pdf)附录`A8.8.108 `，本条指令用于将协处理器寄存器的内容读取到通用目的寄存器中，并忽略了opc2，其完整格式应当是**mrc p15, 0, r9, c0, c0, 0**，其中coproc、CRn、opc1、 CRm、opc2分别为15、c0、0、c0、0；因此根据[ARMv7-AR Reference Manual](https://silver.arm.com/download/ARM_and_AMBA_Architecture/AR570-DA-70000-r0p0-00rel3/DDI0406C_d_armv7ar_arm.pdf)表`B3-42`，本指令用于访问**MIDR（Main ID Register）**；MIDR定义在[ARMv7-AR Reference Manual](https://silver.arm.com/download/ARM_and_AMBA_Architecture/AR570-DA-70000-r0p0-00rel3/DDI0406C_d_armv7ar_arm.pdf)附录`B4.1.105`，包含实现者ID（ARM、高通等）、架构类型（V4、V5等）、变种、编号、版本等信息。
+    根据[ARMv7-AR Reference Manual](https://silver.arm.com/download/ARM_and_AMBA_Architecture/AR570-DA-70000-r0p0-00rel3/DDI0406C_d_armv7ar_arm.pdf)附录`A8.8.108 MRC, MRC2`，本条指令用于将协处理器寄存器的内容读取到通用目的寄存器中，并忽略了opc2，其完整格式应当是**mrc p15, 0, r9, c0, c0, 0**，其中coproc、CRn、opc1、 CRm、opc2分别为15、c0、0、c0、0；因此根据[ARMv7-AR Reference Manual](https://silver.arm.com/download/ARM_and_AMBA_Architecture/AR570-DA-70000-r0p0-00rel3/DDI0406C_d_armv7ar_arm.pdf)表`B3-42`，本指令用于访问**MIDR（Main ID Register）**；MIDR定义在[ARMv7-AR Reference Manual](https://silver.arm.com/download/ARM_and_AMBA_Architecture/AR570-DA-70000-r0p0-00rel3/DDI0406C_d_armv7ar_arm.pdf)附录`B4.1.105`，包含实现者ID（ARM、高通等）、架构类型（V4、V5等）、变种、编号、版本等信息。
 2. bl      __lookup_processor_type
    根据MIDR内容从处理器信息表中查找相应的处理器；该函数定义在`arch/arm/kernel/head-common.S`中，后面会给出详细解释
 3. beq    __error_p
@@ -266,8 +339,9 @@ ENTRY(stext)
 #endif
 ```
 逐条解释如下：
-1. adr    r3, 2f => ADR r3,{pc}+0x40
-将当前指令的地址与0x40的和赋给r3,即获取标号2物理地址（运行时地址），文中为0x80008054
+1. adr    r3, 2f
+
+    将标号2与PC的差值之间的差值加上PC后存放到r3中，相当于`ADR r3,{pc}+0x40`, 即将当前指令的地址与0x40的和赋给r3,即获取标号2物理地址（运行时地址），文中为0x80008054
 
 2. ldmia    r3, {r4, r8}
 将标号2的虚地址（链接地址）和PAGE_OFFSET变量的虚地址加载到r4和r8
