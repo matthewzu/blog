@@ -1,6 +1,34 @@
-由于受到众多硬件厂商及软件巨头的支持，以及自身学术性和应用性的完美结合，Linux操作系统在各个方面尤其是嵌入式领域得到了广泛应用。同时，作为开源软件，市面上虽然已经有不少介绍Linux内核启动流程的文章和书籍，但往往都过于简陋，流于表面，或者过于分散，无法得到一个整体的印象。本文基于ARM FVP模拟器平台ARMv7 Cortext-A9处理器，专注于Linux 4.10内核启动流程中的内核初始化环节，对整个过程中涉及到的ARM和Linux内核的基本知识进行介绍，使得用户可以对整个启动流程有一个整体的概念，从而有助于解决启动过程中遇到的各种问题。
+由于受到众多硬件厂商及软件巨头的支持，以及自身学术性和应用性的完美结合，Linux操作系统在各个方面尤其是嵌入式领域得到了广泛应用。同时，作为开源软件，市面上虽然已经有不少介绍Linux内核启动流程的文章和书籍，但往往都过于简陋，流于表面，或者过于分散，无法得到一个整体的印象。本文基于ARM FVP模拟器平台ARMv7 Cortext-A9处理器，专注于Linux 4.10内核启动流程中的内核初始化环节，对整个过程进行逐行解读，分析每行关键代码涉及到的ARM架构和Linux内核的基本知识，使得用户可以对整个启动流程有一个整体的概念，从而有助于解决启动过程中遇到的各种问题。
 
 **关键词**：嵌入式系统,虚拟化,Linux内核,ARM,32位，ARMv7,Cortext-A9；内核初始化
+- [1. 介绍](#1-%E4%BB%8B%E7%BB%8D)
+  - [1.1 基本环境](#11-%E5%9F%BA%E6%9C%AC%E7%8E%AF%E5%A2%83)
+  - [1.2 初始化阶段划分](#12-%E5%88%9D%E5%A7%8B%E5%8C%96%E9%98%B6%E6%AE%B5%E5%88%92%E5%88%86)
+  - [1.3 内核启动条件和参数](#13-%E5%86%85%E6%A0%B8%E5%90%AF%E5%8A%A8%E6%9D%A1%E4%BB%B6%E5%92%8C%E5%8F%82%E6%95%B0)
+- [2.入口阶段](#2%E5%85%A5%E5%8F%A3%E9%98%B6%E6%AE%B5)
+  - [2.1 主体](#21-%E4%B8%BB%E4%BD%93)
+  - [2.2 safe_svcmode_maskall](#22-safesvcmodemaskall)
+  - [2.2 获取处理器信息](#22-%E8%8E%B7%E5%8F%96%E5%A4%84%E7%90%86%E5%99%A8%E4%BF%A1%E6%81%AF)
+    - [2.2.1 主体](#221-%E4%B8%BB%E4%BD%93)
+    - [2.2.2 __lookup_processor_type](#222-lookupprocessortype)
+  - [2.3 可选的内核解压缩过程](#23-%E5%8F%AF%E9%80%89%E7%9A%84%E5%86%85%E6%A0%B8%E8%A7%A3%E5%8E%8B%E7%BC%A9%E8%BF%87%E7%A8%8B)
+- [2. __fixup_pv_table](#2-fixuppvtable)
+  - [2.1 准备pv表](#21-%E5%87%86%E5%A4%87pv%E8%A1%A8)
+  - [2.2 修正表项](#22-%E4%BF%AE%E6%AD%A3%E8%A1%A8%E9%A1%B9)
+- [3. __create_page_tables](#3-createpagetables)
+  - [3.1 准备工作](#31-%E5%87%86%E5%A4%87%E5%B7%A5%E4%BD%9C)
+  - [3.2 为__turn_mmu_on函数创建临时映射](#32-%E4%B8%BAturnmmuon%E5%87%BD%E6%95%B0%E5%88%9B%E5%BB%BA%E4%B8%B4%E6%97%B6%E6%98%A0%E5%B0%84)
+  - [3.3 映射内核映像（代码段、数据段、BSS段）](#33-%E6%98%A0%E5%B0%84%E5%86%85%E6%A0%B8%E6%98%A0%E5%83%8F%E4%BB%A3%E7%A0%81%E6%AE%B5%E6%95%B0%E6%8D%AE%E6%AE%B5bss%E6%AE%B5)
+  - [3.4 映射启动参数（ATAGs/DTB）](#34-%E6%98%A0%E5%B0%84%E5%90%AF%E5%8A%A8%E5%8F%82%E6%95%B0atagsdtb)
+  - [3.5 映射串口](#35-%E6%98%A0%E5%B0%84%E4%B8%B2%E5%8F%A3)
+- [4. 使能MMU](#4-%E4%BD%BF%E8%83%BDmmu)
+  - [4.1 主体部分](#41-%E4%B8%BB%E4%BD%93%E9%83%A8%E5%88%86)
+  - [4.2 设置操作第一阶段（即__v7_ca9mp_setup）](#42-%E8%AE%BE%E7%BD%AE%E6%93%8D%E4%BD%9C%E7%AC%AC%E4%B8%80%E9%98%B6%E6%AE%B5%E5%8D%B3v7ca9mpsetup)
+  - [4.3 设置操作第二阶段（即errata阶段）](#43-%E8%AE%BE%E7%BD%AE%E6%93%8D%E4%BD%9C%E7%AC%AC%E4%BA%8C%E9%98%B6%E6%AE%B5%E5%8D%B3errata%E9%98%B6%E6%AE%B5)
+  - [4.4 设置操作第三阶段](#44-%E8%AE%BE%E7%BD%AE%E6%93%8D%E4%BD%9C%E7%AC%AC%E4%B8%89%E9%98%B6%E6%AE%B5)
+  - [4.5 使能MMU](#45-%E4%BD%BF%E8%83%BDmmu)
+  - [4.6 __turn_mmu_on（）](#46-turnmmuon)
+  - [4.7 __mmap_switched（）](#47-mmapswitched)
 
 # 1. 介绍
 
@@ -49,33 +77,70 @@ Linux内核被加载时，根据处理器架构的不同都需要遵循一定的
 
 # 2.入口阶段
 
-该阶段的主要任务是：
-1. 可选的内核解压缩
-2. 获取处理器信息;
-3. 获取内核参数；
-4. 进行基本的CPU初始化；
-5. 准备C语言运行环境。
-
 32位ARM架构包含2个内核初始化入口：
 * arch\arm\boot\compressed\head.S包含压缩版本内核初始化入口start();
 * arch\arm\kernel\head.S包含CPU初始化入口stext()。
 
 **注意**：压缩版本内核在完成内核解压后，仍然会跳转到真正的内核初始化入口stext()。
 
-## 2.1 入口部分
+## 2.1 主体
 
-此段代码**为后续初始化准备基本环境，即进入SVC模式并关闭中断**。
+本段代码的的主要任务是：
+* 进入SVC模式并关闭中断；
+* 获取处理器信息;
+* 验证`r2`有效性（ATAGS或DTB）；
+* 根据PV表修正stub代码中add/sub指令；
+* 创建初始页表；
+* 使能MMU；
+* 进行基本的CPU初始化；
+* 准备C语言运行环境并跳转到c语言入口start_kernel()即早期初始化阶段。
 
-### 2.1.1 主体
-
-本段代码定义在`arch\arm\kernel\head.S`中，作为**CPU初始化入口**。
-
-```cpp
+```
     __HEAD
 ENTRY(stext)
     ...
     safe_svcmode_maskall r9
+
+    mrc    p15, 0, r9, c0, c0       @ get processor id
+    bl    __lookup_processor_type   @ r5=procinfo r9=cpuid
+    movs    r10, r5                 @ invalid processor (r5=0)?
     ...
+    beq    __error_p                @ yes, error 'p'
+    ...
+#ifndef CONFIG_XIP_KERNEL
+    adr    r3, 2f
+    ldmia    r3, {r4, r8}
+    sub    r4, r3, r4               @ (PHYS_OFFSET - PAGE_OFFSET)
+    add    r8, r8, r4               @ PHYS_OFFSET
+#else
+    ...
+#endif
+    ...
+    bl    __vet_atags
+    ...
+#ifdef CONFIG_ARM_PATCH_PHYS_VIRT
+    bl    __fixup_pv_table
+#endif
+    bl    __create_page_tables
+    ...
+    ldr    r13, =__mmap_switched    @ address to jump to after
+                                    @ mmu has been enabled
+    badr   lr, 1f                   @ return (PIC) address
+#ifdef CONFIG_ARM_LPAE
+    ...
+#else
+    mov    r8, r4                   @ set TTBR1 to swapper_pg_dir
+#endif
+    ldr    r12, [r10, #PROCINFO_INITFUNC]
+    add    r12, r12, r10
+    ret    r12
+1:  b    __enable_mmu
+ENDPROC(stext)
+    .ltorg
+#ifndef CONFIG_XIP_KERNEL
+2:  .long    .
+    .long    PAGE_OFFSET
+#endif
 ```
 逐条解释如下：
 1. __HEAD
@@ -170,9 +235,71 @@ ENTRY(stext)
     根据[GNU汇编器（as）手册.globl语法](https://sourceware.org/binutils/docs/as/Global.html#Global)和[GNU汇编器（as）手册.align语法](https://sourceware.org/binutils/docs/as/Align.html#Align)，此处定义`stext`标号，将其声明为全局符号，不做任何对齐。
 3. safe_svcmode_maskall r9
 
-    进入SVC模式，并关闭中断
+    * 进入SVC模式并关闭中断。，因为根据[ARMv7-AR Reference Manual](https://silver.arm.com/download/ARM_and_AMBA_Architecture/AR570-DA-70000-r0p0-00rel3/DDI0406C_d_armv7ar_arm.pdf)附录`B1.3.1 ARM processor modes`，ARM有9种工作模式，其中：
+      * `Monitor`和`Hyp`模式用于虚拟化特性；
+      * `User`模式是非特权模式，处理器核心资源访问受限，通常用于应用程序；
+      * `System`模式具有比`User`模式更高的特权，能够访问处理器核心资源，但是与`User`模式共享一套寄存器（参考[ARMv7-AR Reference Manual](https://silver.arm.com/download/ARM_and_AMBA_Architecture/AR570-DA-70000-r0p0-00rel3/DDI0406C_d_armv7ar_arm.pdf)附录`B1.3.2 ARM core registers`），没有自己的SP（栈指针）、LR（链接寄存器）和SPSR（处理器状态保存寄存器）；
+      * `Supervisor(SVC)`与其他4种模式具有与 `System`模式同样的特权，都属于异常模式，即处理器发生异常（Supervisor Call、IRQ、FIQ等）时自动进入，同时具有独立的SP、LR和SPSR寄存器；系统调用通常是操作系统不可或缺的功能，并且操作系统也需要独立的栈和状态寄存器等；
+      * **与`System`模式相比，使用SVC模式作为内核工作模式，不但减少额外的模式支持和切换，使用独立的内核栈，还可以使用独立的LR和SPSR寄存器减少内核切换开销**。
+   * ，因为中断控制器驱动、中断子系统以及相应的设备驱动完成初始化之前，中断向量没有设置或者中断向量处挂接的默认中断处理函数无法清除中断事件，从而导致**处理器挂死或频繁中断**，例如电平触发模式的中断不清除时会一直存在，边沿触发的中断在某些设备工作机制下（发送缓冲区空中断等）也有可能一直存在，因此**入口阶段必须关闭中断**。
 
-### 2.1.2 safe_svcmode_maskall
+4. mrc     p15, 0, r9, c0, c0
+
+    根据[ARMv7-AR Reference Manual](https://silver.arm.com/download/ARM_and_AMBA_Architecture/AR570-DA-70000-r0p0-00rel3/DDI0406C_d_armv7ar_arm.pdf)附录`A8.8.108 MRC, MRC2`，本条指令用于将协处理器寄存器的内容读取到通用目的寄存器中，并忽略了opc2，其完整格式应当是**mrc p15, 0, r9, c0, c0, 0**，其中coproc（协处理器名称）、CRn（协处理器寄存器）、opc1、 CRm、opc2分别为15、c0、0、c0、0；因此根据[ARMv7-AR Reference Manual](https://silver.arm.com/download/ARM_and_AMBA_Architecture/AR570-DA-70000-r0p0-00rel3/DDI0406C_d_armv7ar_arm.pdf)表`B3-42`，本指令用于访问**MIDR（Main ID Register）**；MIDR定义在[ARMv7-AR Reference Manual](https://silver.arm.com/download/ARM_and_AMBA_Architecture/AR570-DA-70000-r0p0-00rel3/DDI0406C_d_armv7ar_arm.pdf)附录`B4.1.105`，包含实现者ID（ARM、高通等）、架构类型（V4、V5等）、变种、编号、版本等信息。
+5. bl      __lookup_processor_type
+
+   根据MIDR内容从处理器信息表中查找相应的处理器；该函数定义在`arch/arm/kernel/head-common.S`中，后面会给出详细解释
+6. movs    r10, r5
+
+   将`r5`寄存器的内容保存到`r10`中，同时更新条件标志。
+
+7. beq    __error_p
+
+   如果条件标志为0,即’r5‘为0，表明没有查找到相应的处理器信息，则跳转到`__error_p`进行错误处理。
+8. adr    r3, 2f
+
+    将标号2与PC的差值之间的差值加上PC后存放到r3中，相当于`ADR r3,{pc}+0x40`, 即将当前指令的地址与0x40的和赋给r3,即获取标号2物理地址（运行时地址），文中为0x80008054。**注意**，[ARMv7-AR Reference Manual](https://silver.arm.com/download/ARM_and_AMBA_Architecture/AR570-DA-70000-r0p0-00rel3/DDI0406C_d_armv7ar_arm.pdf)附录`A2.3 ARM core registers`，`PC指针`读取时其内容为**当前指令地址 + 8**。
+
+9. ldmia    r3, {r4, r8}
+
+    将标号2的虚地址（链接地址）和PAGE_OFFSET变量的虚地址加载到r4和r8
+
+10. sub    r4, r3, r4            @ (PHYS_OFFSET - PAGE_OFFSET)
+
+     `r3`（`标号2`物理地址）与`r4`（`标号2`虚拟地址）相减后存入`r4`。
+11. add    r8, r8, r4            @ PHYS_OFFSET
+
+     `r8`（`PAGE_OFFSET`虚拟地址）与`r4`（`标号2`物理地址和`标号2`虚拟地址之间的差值）相加后存入`r8`：
+    > `PAGE_OFFSET`虚拟地址 + `标号2`物理地址 - `标号2`虚拟地址
+    > = (`PAGE_OFFSET`虚拟地址 - `标号2`虚拟地址) + `标号2`物理地址
+    > = `PAGE_OFFSET`物理地址
+    > = `PAGE_OFFSET`运行时地址
+
+12. bl    __vet_atags
+
+    跳转到__vet_atags以验证`r2`有效性（ATAGS或DTB）。
+13. bl    __fixup_pv_table
+
+    跳转到__fixup_pv_table以根据PV表修正stub代码中add/sub指令。
+14. bl    __create_page_tables
+
+    跳转到__create_page_tables以创建初始页表。
+15. ldr    r13, =__mmap_switched
+
+    根据[ARMv7-AR Reference Manual](https://silver.arm.com/download/ARM_and_AMBA_Architecture/AR570-DA-70000-r0p0-00rel3/DDI0406C_d_armv7ar_arm.pdf)附录`A8.8.65 LDR (literal)`和[ARM Software Development Toolkit Reference Guide](http://infocenter.arm.com/help/topic/com.arm.doc.dui0041c/DUI0041C.pdf)章节`5.5.5 LDR ARM pseudo-instruction`和`5.8.51 LTORG directive`本条指令需要与相当于这段代码末尾的`.ltorg`配合使用，为ldr指令创建一个**文字池**以存放`__mmap_switched`的虚地址(链接地址)，相当于**LDR r13,[pc,#20]**， 即将标号`__mmap_switched`的虚地址（链接地址）存放到`r13`；此外，根据[Procedure Call Standard for the ARM Architecture](http://infocenter.arm.com/help/index.jsp?topic=/com.arm.doc.subset.swdev.abi/index.html)的`5.1.1章节`，**r13寄存器用作SP寄存器**（栈指针）。
+
+16. badr    lr, 1f
+
+将标号1所在的物理地址（运行时地址）写入`lr`寄存器
+
+1. mov    r8, r4
+将初始页表基地址放入`r8`
+
+4. ldr    r12, [r10, #PROCINFO_INITFUNC]
+读取保存在处理器信息结构中的初始化函数偏移，放入`r12`；其中`r10`中存放的是处理器信息结构地址
+
+
+## 2.2 safe_svcmode_maskall
 
 本函数定义在`arch/arm/include/asm/assembler.h`中，用于**使CPU进入SVC模式并关闭中断**。
 
@@ -234,7 +361,7 @@ ENTRY(stext)
     如果上一条tst指令测试的结果非0，即**当前处理器模式不是`Hypervisor模式`，则跳转到标号1；否则继续执行下一条指令**。
 9.  orr     \reg, \reg, #PSR_A_BIT
 
-    `reg`寄存器中的内容（上一条orr指令的输出结果）与`#PSR_A_BIT`按位与，即**关闭异步终止异常**（内存系统异常等）。
+    `reg`寄存器中的内容（上一条orr指令的输出结果）与`#PSR_A_BIT`按位与，即**关闭异步终止异常**（内存系统异常等），因为**此时异常向量表尚未正确设置**。
 10. badr    lr, 2f
 
     `badr`定义在`arch/arm/include/asm/assembler.h`中，
@@ -297,13 +424,11 @@ ENTRY(stext)
 
 ## 2.2 获取处理器信息
 
-```cpp
-    __HEAD
-ENTRY(stext)
-...
-    @ ensure svc mode and all interrupts masked
-    safe_svcmode_maskall r9
+本段代码定义在`arch\arm\kernel\head.S`中，紧跟在[2.1 入口部分](#21-%E5%85%A5%E5%8F%A3%E9%83%A8%E5%88%86)之后，用于**获取处理器信息**。
 
+### 2.2.1 主体
+
+```cpp
     mrc     p15, 0, r9, c0, c0      @ get processor id
     bl      __lookup_processor_type @ r5=procinfo r9=cpuid
     movs    r10, r5                 @ invalid processor (r5=0)?
@@ -312,14 +437,206 @@ ENTRY(stext)
     ...
 ```
 逐条解释如下：
-1. mrc     p15, 0, r9, c0, c0
-    根据[ARMv7-AR Reference Manual](https://silver.arm.com/download/ARM_and_AMBA_Architecture/AR570-DA-70000-r0p0-00rel3/DDI0406C_d_armv7ar_arm.pdf)附录`A8.8.108 MRC, MRC2`，本条指令用于将协处理器寄存器的内容读取到通用目的寄存器中，并忽略了opc2，其完整格式应当是**mrc p15, 0, r9, c0, c0, 0**，其中coproc、CRn、opc1、 CRm、opc2分别为15、c0、0、c0、0；因此根据[ARMv7-AR Reference Manual](https://silver.arm.com/download/ARM_and_AMBA_Architecture/AR570-DA-70000-r0p0-00rel3/DDI0406C_d_armv7ar_arm.pdf)表`B3-42`，本指令用于访问**MIDR（Main ID Register）**；MIDR定义在[ARMv7-AR Reference Manual](https://silver.arm.com/download/ARM_and_AMBA_Architecture/AR570-DA-70000-r0p0-00rel3/DDI0406C_d_armv7ar_arm.pdf)附录`B4.1.105`，包含实现者ID（ARM、高通等）、架构类型（V4、V5等）、变种、编号、版本等信息。
-2. bl      __lookup_processor_type
-   根据MIDR内容从处理器信息表中查找相应的处理器；该函数定义在`arch/arm/kernel/head-common.S`中，后面会给出详细解释
-3. beq    __error_p
-   如果没有查找到相应的处理器信息，则跳转到`__error_p`进行错误处理
+1.
 
-## 2.2 可选的内核解压缩过程
+### 2.2.2 __lookup_processor_type
+
+```
+/*
+ * Read processor ID register (CP#15, CR0), and look up in the linker-built
+ * supported processor list.  Note that we can't use the absolute addresses
+ * for the __proc_info lists since we aren't running with the MMU on
+ * (and therefore, we are not in the correct address space).  We have to
+ * calculate the offset.
+ *
+ *    r9 = cpuid
+ * Returns:
+ *    r3, r4, r6 corrupted
+ *    r5 = proc_info pointer in physical address space
+ *    r9 = cpuid (preserved)
+ */
+__lookup_processor_type:
+    adr    r3, __lookup_processor_type_data
+    ldmia  r3, {r4 - r6}
+    sub    r3, r3, r4            @ get offset between virt&phys
+    add    r5, r5, r3            @ convert virt addresses to
+    add    r6, r6, r3            @ physical address space
+1:  ldmia  r5, {r3, r4}            @ value, mask
+    and    r4, r4, r9            @ mask wanted bits
+    teq    r3, r4
+    beq    2f
+    add    r5, r5, #PROC_INFO_SZ        @ sizeof(proc_info_list)
+    cmp    r5, r6
+    blo    1b
+    mov    r5, #0                @ unknown processor
+2:  ret    lr
+ENDPROC(__lookup_processor_type)
+
+/*
+ * Look in <asm/procinfo.h> for information about the __proc_info structure.
+ */
+    .align    2
+    .type    __lookup_processor_type_data, %object
+__lookup_processor_type_data:
+    .long    .
+    .long    __proc_info_begin
+    .long    __proc_info_end
+    .size    __lookup_processor_type_data, . - __lookup_processor_type_data
+```
+
+逐条解释如下：
+1.  adr    r3, __lookup_processor_type_data
+
+    将标号`__lookup_processor_type_data`与PC之间的差值加上PC后存放到`r3`中，从而将标号`__lookup_processor_type_data`的物理地址（运行时地址）放入`r3`中。
+2.  ldmia  r3, {r4 - r6}
+
+    将标号`__lookup_processor_type_data`、`__proc_info_begin`和`__proc_info_end`的虚地址（链接地址）加载到r4、r5和r6。其中，`__proc_info_begin`和`__proc_info_end`为**处理器信息表**的起始和结束地址，定义在`arch/arm/kernel/vmlinux.lds.S`中：
+    ```
+    #define PROC_INFO                           \
+        . = ALIGN(4);                           \
+        VMLINUX_SYMBOL(__proc_info_begin) = .;  \
+        *(.proc.info.init)                      \
+        VMLINUX_SYMBOL(__proc_info_end) = .;
+    ...
+    #ifdef CONFIG_HOTPLUG_CPU
+    ...
+    #else
+    #define ARM_CPU_DISCARD(x)    x
+    #define ARM_CPU_KEEP(x)
+    #endif
+    ...
+    SECTIONS
+    {
+        ...
+        .text : {
+            ...
+        }
+        ...
+        __init_begin = .;
+        ...
+        .init.proc.info : {
+            ARM_CPU_DISCARD(PROC_INFO)
+        }
+        ...
+    }
+    ```
+    其中，`VMLINUX_SYMBOL`定义在`include/linux/export.h`中：
+    ```
+    /* Some toolchains use a `_' prefix for all user symbols. */
+    #ifdef CONFIG_HAVE_UNDERSCORE_SYMBOL_PREFIX
+    ...
+    #else
+    #define __VMLINUX_SYMBOL(x) x
+    ...
+    #endif
+    ```
+    综上所述，**处理器信息表**属于init段的一部分，用于保存处理器信息，数据结构定义包含在`arch/arm/include/asm/procinfo.h`中：
+    ```
+     */
+    struct proc_info_list {
+        unsigned int            cpu_val;    /* 处理器ID比较值 */
+        unsigned int            cpu_mask;   /* 处理器ID掩码，处理器ID同cpu_mask“相与”后与cpu_val比较 */
+        unsigned long           __cpu_mm_mmu_flags;    /* used by head.S */
+        unsigned long           __cpu_io_mmu_flags;    /* used by head.S */
+        unsigned long           __cpu_flush;        /* used by head.S */
+        const char              *arch_name;
+        const char              *elf_name;
+        unsigned int            elf_hwcap;
+        const char              *cpu_name;
+        struct processor        *proc;
+        struct cpu_tlb_fns      *tlb;
+        struct cpu_user_fns     *user;
+        struct cpu_cache_fns    *cache;
+    };
+    ```
+    每种ARM处理器都需要在`arch/arm/mm/proc-*.S`中定义自己的处理器信息，ARM Cortex A9处理器信息定义在`arch/arm/mm/proc-v7.S`（**注意**该文件中包含了一系列ARMv7处理器信息定义，此处仅列出ARM Cortex A9处理器的信息）中：
+    ```
+    .section ".rodata"
+
+    string    cpu_arch_name, "armv7"
+    string    cpu_elf_name, "v7"
+    .align
+
+    .section ".proc.info.init", #alloc
+    ...
+    .macro __v7_proc name, initfunc, mm_mmuflags = 0, io_mmuflags = 0, hwcaps = 0, proc_fns = v7_processor_functions
+        ALT_SMP(.long    PMD_TYPE_SECT | PMD_SECT_AP_WRITE | PMD_SECT_AP_READ | \
+                PMD_SECT_AF | PMD_FLAGS_SMP | \mm_mmuflags)
+        ALT_UP(.long    PMD_TYPE_SECT | PMD_SECT_AP_WRITE | PMD_SECT_AP_READ | \
+                PMD_SECT_AF | PMD_FLAGS_UP | \mm_mmuflags)
+        .long    PMD_TYPE_SECT | PMD_SECT_AP_WRITE | \
+            PMD_SECT_AP_READ | PMD_SECT_AF | \io_mmuflags
+        initfn    \initfunc, \name
+        .long    cpu_arch_name
+        .long    cpu_elf_name
+        .long    HWCAP_SWP | HWCAP_HALF | HWCAP_THUMB | HWCAP_FAST_MULT | \
+            HWCAP_EDSP | HWCAP_TLS | \hwcaps
+        .long    cpu_v7_name
+        .long    \proc_fns
+        .long    v7wbi_tlb_fns
+        .long    v6_user_fns
+        .long    v7_cache_fns
+    .endm
+    ...
+    .type   __v7_ca9mp_proc_info, #object
+    __v7_ca9mp_proc_info:
+        .long    0x410fc090
+        .long    0xff0ffff0
+        __v7_proc __v7_ca9mp_proc_info, __v7_ca9mp_setup, proc_fns = ca9mp_processor_functions
+        .size    __v7_ca9mp_proc_info, . - __v7_ca9mp_proc_info
+    ```
+    由此可以得出，cpu_val为0x410fc090， arch_name为"armv7"，初始化函数为__v7_ca9mp_setup等，其他成员后续用到时会进一步解释。
+
+3.  sub    r3, r3, r4            @ get offset between virt&phys
+
+    `r3`（`__lookup_processor_type_data`物理地址）与`r4`（`__lookup_processor_type_data`虚拟地址）相减后存入`r3`。
+4.  add    r5, r5, r3            @ convert virt addresses to
+
+    `r5`（`__proc_info_begin`虚拟地址）与`r3`（`__lookup_processor_type_data`物理地址和 `__lookup_processor_type_data`虚拟地址之间的差值）相加后存入`r4`：
+    > `__proc_info_begin`虚拟地址 + `__lookup_processor_type_data`物理地址 - `__lookup_processor_type_data`虚拟地址
+    > = (`__proc_info_begin`虚拟地址 - `__lookup_processor_type_data`虚拟地址) + `__lookup_processor_type_data`物理地址
+    > = `__proc_info_begin`物理地址
+    > = `__proc_info_begin`运行时地址
+5.  add    r6, r6, r3            @ physical address space
+
+    类似上一条指令，获取`__proc_info_end`物理地址（运行时地址）
+6.  1:  ldmia  r5, {r3, r4}      @ value, mask
+
+    获取当前处理器信息的cpu_val（处理器ID比较值）和cpu_mask（处理器ID掩码）到`r3`和`r4`中。
+7.  and    r4, r4, r9            @ mask wanted bits
+
+    MIDR内容（包含在`r9`中）与处理器ID掩码相与后存放到`r4`中。
+8.  teq    r3, r4
+
+    上一条指令输出结果与处理器ID比较值比较并更新CPSR条件域。
+9.  beq    2f
+
+相等（匹配）则直接返回，其中`r5`即为处理器信息的物理地址（运行时地址）。
+10. add    r5, r5, #PROC_INFO_SZ @ sizeof(proc_info_list)
+
+    不相等（不匹配）则将指针加上PROC_INFO_SZ，跳过当前表项。其中`PROC_INFO_SZ`定义在`arch/arm/kernel/asm-offsets.c`中：
+    ```
+    int main(void)
+    {
+    ...
+    DEFINE(PROC_INFO_SZ,    sizeof(struct proc_info_list));
+    ...
+    }
+    ```
+11. cmp    r5, r6
+
+    比较`r5`（当前指针）与`r6`（`__proc_info_end`物理地址）并更新CPSR条件域。
+12. blo    1b
+
+    `r5`小于`r6`则继续检查下一条处理器信息表项，`1b`表示上一个标号`1`。
+13. mov    r5, #0                @ unknown processor
+
+    `r5`不小于`r6`表明已经到达处理器信息表尾部，只能将`r5`设置为0,表示没有找到匹配的处理器信息表项。
+14. 2:  ret    lr
+
+    返回到调用者。
+
+## 2.3 可选的内核解压缩过程
 
 此段代码**计算内核映像物理地址（PHYS_OFFSET）并存储到r8中**。
 
@@ -339,19 +656,7 @@ ENTRY(stext)
 #endif
 ```
 逐条解释如下：
-1. adr    r3, 2f
-
-    将标号2与PC的差值之间的差值加上PC后存放到r3中，相当于`ADR r3,{pc}+0x40`, 即将当前指令的地址与0x40的和赋给r3,即获取标号2物理地址（运行时地址），文中为0x80008054
-
-2. ldmia    r3, {r4, r8}
-将标号2的虚地址（链接地址）和PAGE_OFFSET变量的虚地址加载到r4和r8
-
-3. sub    r4, r3, r4            @ (PHYS_OFFSET - PAGE_OFFSET)
-获取标号2虚地址和物理地址的差值
-
-4. add    r8, r8, r4            @ PHYS_OFFSET
-PAGE_OFFSET + （标号2物理地址 - 标号2虚地址） =
-（PAGE_OFFSET虚地址 - 标号2虚地址） + 标号2物理地址 = PAGE_OFFSET对应的物理地址 = PHYS_OFFSET
+1.
 
 # 2. __fixup_pv_table
 
